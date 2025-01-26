@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: SQLite Object Cache (Drop-in)
- * Version: 1.3.8
+ * Version: 1.4.0
  * Note: This Version number must match the one in SQLite_Object_Cache::_construct.
  * Plugin URI: https://wordpress.org/plugins/sqlite-object-cache/
  * Description: A persistent object cache backend powered by SQLite3.
@@ -10,8 +10,8 @@
  * License: GPLv2+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Requires PHP: 5.6
- * Tested up to: 6.4.1
- * Stable tag: 1.3.8
+ * Tested up to: 6.7
+ * Stable tag: 1.4.0
  *
  * NOTE: This uses the file .../wp-content/.ht.object_cache.sqlite
  * and the associated files .../wp-content/.ht.object_cache.sqlite-shm
@@ -434,6 +434,16 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
     }
 
     /**
+     * Make sure connections are always closed at end of request
+     */
+    public function __destruct() {
+      if ( $this->sqlite ) {
+        $this->sqlite->close();
+        unset( $this->sqlite );
+      }
+    }
+
+    /**
      * Load translations early if necessary and possible.
      *
      * @return bool
@@ -627,7 +637,6 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
      */
     private function time_usec() {
       if ( $this->has_hrtime ) {
-        /** @noinspection PhpElementIsNotAvailableInCurrentPhpVersionInspection */
         return hrtime( true ) * 0.001;
       }
 
@@ -1495,7 +1504,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
      *
      * @return void
      */
-    private function actuaL_put_by_name( $name, $value, $expires ) {
+    private function actual_put_by_name( $name, $value, $expires ) {
       if ( $this->upsertone ) {
         $stmt = $this->upsertone;
         $stmt->bindValue( ':name', $name, SQLITE3_TEXT );
@@ -1968,7 +1977,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
         }
         $this->checkpoint();
       } catch ( Exception $ex ) {
-        /* Empty, intenionally. */
+        /* Empty, intentionally. */
       }
     }
 
@@ -2063,6 +2072,18 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
     }
 
     /**
+     * Checkpoint and immediately vacuum.
+     *
+     * Notice that
+     * @return void
+     */
+    public function vacuum() {
+      $this->checkpoint();
+      $this->sqlite->exec( 'VACUUM;' );
+
+    }
+
+    /**
      * Clears the object cache of all data.
      *
      * @param bool $vacuum True to do a VACUUM operation.
@@ -2087,7 +2108,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
           /* @noinspection SqlConstantCondition, SqlConstantExpression */
           $limit = self::TRANSACTION_SIZE_LIMIT;
           $hit   = $limit;
-
+          $this->checkpoint();
           $sql = 'DELETE FROM ' . $this->cache_table_name . ' WHERE name IN (SELECT name FROM ' . $this->cache_table_name . ' WHERE ' . implode( ' AND ', $clauses ) . ' LIMIT $limit);';
           while ( $hit >= $limit ) {
             $this->sqlite->exec( $sql );
@@ -2100,7 +2121,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
         }
 
         if ( $vacuum ) {
-          $this->sqlite->exec( 'VACUUM;' );
+          $this->vacuum();
         }
       } catch ( Exception $ex ) {
         $this->error_log( 'flush failure, recreate cache.', $ex );

@@ -4,9 +4,9 @@ Contributors: OllieJones
 Tags: cache, object cache, sqlite, performance, database
 Requires at least: 5.5
 Requires PHP: 5.6
-Tested up to: 6.7
-Version: 1.4.0
-Stable tag: 1.4.0
+Tested up to: 6.7.1
+Version: 1.4.1
+Stable tag: 1.4.1
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 Github Plugin URI: https://github.com/OllieJones/sqlite-object-cache
@@ -18,7 +18,7 @@ A fast persistent object cache backend for the rest of us, powered by SQLite.
 
 == Description ==
 
-A [persistent object cache](https://developer.wordpress.org/reference/classes/wp_object_cache/#persistent-cache-plugins) helps your site perform well. This one uses the widely available [SQLite3](https://www.php.net/manual/en/book.sqlite3.php) extension to php. Many hosting services offer it, and it's easy to install on a server you cohtrol.
+A [persistent object cache](https://developer.wordpress.org/reference/classes/wp_object_cache/#persistent-cache-plugins) helps your site perform well. This one uses the widely available [SQLite3](https://www.php.net/manual/en/book.sqlite3.php) extension to php. Many hosting services offer it, and it's easy to install on a server you control.
 
 [Caches](https://en.wikipedia.org/wiki/Cache_(computing)) are ubiquitous in computing, and WordPress has its own caching subsystem. Caches contain short-term copies of the results of expensive database lookups or computations, and allow software to use the copy rather than repeating the expensive operation. This plugin (like other object-caching plugins) extends WordPress's caching subsystem to save those short-term copies from page view to page view. WordPress's cache happens to be a [memoization](https://en.wikipedia.org/wiki/Cache_(computing)#Memoization) cache.
 
@@ -26,17 +26,23 @@ Without a persistent object cache, every WordPress page view must use your Maria
 
 <h4>Who should use this?</h4>
 
-If your site runs on a single web server machine, and that server provides the [SQLite3](https://www.php.net/manual/en/book.sqlite3.php) and [igbinary](https://www.php.net/manual/en/intro.igbinary.php) extensions to php, this plugin will almost certainly make your site work better..
+If your site runs on a single web server machine, and that server provides the [SQLite3](https://www.php.net/manual/en/book.sqlite3.php) and [igbinary](https://www.php.net/manual/en/intro.igbinary.php) extensions to php, this plugin will almost certainly make your site work better.
 
-Some hosting providers offer [redis](https://redis.io/) cache servers. If your provider offers redis, it may be a good choice. You can use it via tbe [Redis Object Cache](https://wordpress.org/plugins/redis-cache/) plugin. Sites using redis have one SQL database and another non-SQL storage scheme: redis. Other hosting providers offer [memcached](https://memcached.org/), which has the [Memcached Object Cache](https://wordpress.org/plugins/memcached/). And some large multipurpose cache plugins, such as the [LiteSpeed Cache](https://wordpress.org/plugins/litespeed-cache/), also offer object caching based on one of those cache server software packages.
+Some hosting providers offer [redis](https://redis.io/) cache servers. If your provider offers redis, it may be a good choice. You can use it via tbe [Redis Object Cache](https://wordpress.org/plugins/redis-cache/) plugin. Sites using redis have one SQL database and another non-SQL storage scheme: redis. Other hosting providers offer [memcached](https://memcached.org/), which has the [Memcached Object Cache](https://wordpress.org/plugins/memcached/) plugin. And some large multipurpose cache plugins, such as the [LiteSpeed Cache](https://wordpress.org/plugins/litespeed-cache/), also offer object caching based on one of those cache server software packages.
 
-The cache-server  approach to object caching comes into its own when you have multiple load-balanced web server machines handling your site. SQLite doesn't work correctly in multiple-web-server environment.
+The cache-server approach to object caching comes into its own when you have multiple load-balanced web server machines handling your site. SQLite doesn't work correctly in a multiple-web-server environment.
 
-But, for single-server site configurations, SQLite performs well.
+But, for single-server site configurations, SQLite performs well. And the vast majority of sites are single-server.
+
+<h4>WP-CLI</h4>
+
+You can control this plugin via WP-CLI. Please type this command into your shell for details.
+
+`wp help sqlite-object-cache`
 
 <h4>Credits</h4>
 
-Thanks to [Till Krüss](https://profiles.wordpress.org/tillkruess/). His [Redis Object Cache](https://wordpress.org/plugins/redis-cache/) plugin serves as a model for this one. And thanks to [Ari Stathopoulos](https://profiles.wordpress.org/aristath/) and [Jonny Harris](https://profiles.wordpress.org/spacedmonkey/) for reviewing this. (All defects are, of course, entirely the author's responsibility.)
+Thanks to [Till Krüss](https://profiles.wordpress.org/tillkruess/). His [Redis Object Cache](https://wordpress.org/plugins/redis-cache/) plugin serves as a model for this one. And thanks to [Ari Stathopoulos](https://profiles.wordpress.org/aristath/) and [Jonny Harris](https://profiles.wordpress.org/spacedmonkey/) for reviewing this. Props to Matt Jones for finding and fixing a bug that appeared on a heavily loaded system. All defects are, of course, entirely the author's responsibility.
 
 And thanks to Jetbrains for the use of their software development tools, especially [PhpStorm](https://www.jetbrains.com/phpstorm/). It's hard to imagine how a plugin like this one could be developed without PhpStorm's tools for exploring epic code bases like WordPress's.
 
@@ -79,9 +85,11 @@ Exactly predicting each site's speedup is not possible. Still, benchmarking resu
 
 = What Cached Data Size should I use for my site? =
 
-The default setting for Cached Data Size is 16 megabytes (MiB). This plugin allows the actual cached data size to grow larger than that, and occasionally removes old data to trim back the size to the setting. Take a look at the Statistics page. If your actual cached data setting is consistently larger than the setting, double the setting.
+The default setting for Cached Data Size is 16 megabytes (MiB). This plugin allows the actual cached data size to grow larger than that, and occasionally removes old -- the least recently updated -- data to trim back the size to the setting. Take a look at the Statistics page. If your actual cached data usage under All Groups is consistently larger than the setting, double the setting.
 
 If you operate a large and busy site, try an initial setting of 32 MiB, then adjust it based on the growth of the actual size.
+
+Notice that this setting controls the size of the data in the cache. That is the size shown under All Groups. The data file used by SQLite is larger than that.
 
 = What is SQLite? =
 
@@ -123,13 +131,13 @@ That's not how object caching works. It's different from page caching. It works 
 
 **Yes**. It does not require any specific database server version.
 
-does = Is this plugin compatible with my version of redis or memcached? =
+= Is this plugin compatible with my version of redis or memcached? =
 
 It does not use either. 
 
-= This cache uses a file on my server HDD/SSD, while redis and memcached use RAM. Aren't they faster?  =
+= This cache uses a file on my server HDD/SSD, while redis and memcached use RAM. Isn't RAM faster?  =
 
-They may indeed be faster. But, modern server operating systems offer extensive page caching for files, and SQLite is designed to take advantage of that. Using a separate cache server require the web server to issue network requests and wait for responses, whereas using SQLite does not. Many users have found this caching methodology to be fast.
+RAM is indeed faster. Modern server operating systems offer extensive page caching for files, and SQLite is designed to take advantage of that, so the data needed may already be in RAM. Using a separate cache server require the web server to issue network requests and wait for responses, whereas using SQLite does not. Many users have found this caching methodology to be fast.
 
 = Why not use the site's main MariaDB or MySql database server for the object cache? =
 
@@ -139,15 +147,15 @@ In WordPress, as in many web frameworks, your database server is a performance b
 
 **No.** It's a cache, and everything in it is ephemeral. When WordPress cannot find what it needs in the cache, it simply recomputes it or refetches it from the database.
 
-To avoid backing up SQLite files, tell your backup plugin to skip the files named `*.sqlite`, `*.sqlite-wal`, and `*.sqlite-shm`.
+To avoid backing up SQLite files, tell your backup plugin to skip the files named `*.sqlite`, `*.sqlite-wal`,  `*.sqlite-wal2`, and `*.sqlite-shm`.
 
 This plugin automatically suppresses backing up your SQLite data when you use the [Updraft Plus](https://wordpress.org/plugins/updraftplus/), [BackWPUp](https://wordpress.org/plugins/backwpup/), or [WP STAGING](https://wordpress.org/plugins/wp-staging/) plugins. The [Duplicator](https://wordpress.org/plugins/duplicator/) plugin does not offer an automated way to suppress copying those files.
 
 If you use some other backup or cloning plugin, please let the author know by creating a [support topic](https://wordpress.org/support/plugin/sqlite-object-cache/).
 
-= If I already have another persistent object cache, can I use this one? =
+= If I already have another persistent object cache plugin, can I use this one? =
 
-**No.** You only need one persistent object cache, and WordPress only supports one.
+**No.** You only need one persistent object cache plugin, and WordPress only supports one.
 
 = If I operate a scaled-up load-balanced installation, can I use this? =
 
@@ -163,7 +171,7 @@ The [Performance Lab plugin](https://wordpress.org/plugins/performance-lab/) off
 
 = How can I use this object cache to make my plugin or theme code run faster? =
 
-Use transients to store your cacheable data. WordPress's [Transient API](https://developer.wordpress.org/apis/transients/) uses persistent object caching if it's available, and the MariaDB or MySQL database when it isn't. The [Metadata API](https://developer.wordpress.org/apis/metadata/) and [Options API](https://developer.wordpress.org/apis/options/) also use persistent object caching.
+Easy. Use transients to store your cacheable data. WordPress's [Transient API](https://developer.wordpress.org/apis/transients/) uses persistent object caching if it's available, and the MariaDB or MySQL database when it isn't. The [Metadata API](https://developer.wordpress.org/apis/metadata/) and [Options API](https://developer.wordpress.org/apis/options/) also use persistent object caching.
 
 = How does this work? =
 
@@ -238,6 +246,11 @@ Please look for more questions and answers [here](https://www.plumislandmedia.ne
 
 
 == Changelog ==
+
+= 1.4.1 =
+
+* More efficient testing for drop-in validity.
+* More accurate least-recently-updated cleanup.
 
 = 1.4.0 =
 

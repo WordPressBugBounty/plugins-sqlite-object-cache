@@ -5,9 +5,8 @@ Tags: cache, object cache, sqlite, performance, apcu
 Requires at least: 5.5
 Requires PHP: 5.6
 Tested up to: 6.7.2
-Tested up to: 6.7.2
-Version: 1.5.1
-Stable tag: 1.5.1
+Version: 1.5.4
+Stable tag: 1.5.4
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 Github Plugin URI: https://github.com/OllieJones/sqlite-object-cache
@@ -82,18 +81,18 @@ wp config set WP_CACHE_KEY_SALT $(openssl rand -base64 12)
 wp plugin activate sqlite-object-cache
 wp sqlite-object-cache size 32`
 
-The plugin offers a few optional settings for your `wp-config.php` file. If you change them, deactivate the plugin first, then change them, then reactivate the plugin.
+The plugin offers a few optional settings for your `wp-config.php` file. Do not change them while the plugin is activated. If you change them, deactivate the plugin first, then change them, then reactivate the plugin.
 
-* WP_CACHE_KEY_SALT. Set this to a hard-to-guess random value to make your cache keys harder to guess. This setting works for other cache plugins as well.
 * WP_SQLITE_OBJECT_CACHE_SERIALIZE. When true, this forces the plugin to use 's [serialize()](https://www.php.net/manual/en/function.serialize.php) scheme to store cached data in SQLite. If this is not set, the plugin uses the more efficient [igbinary](https://www.php.net/manual/en/function.igbinary-serialize.php) scheme if it is available.
 * WP_SQLITE_OBJECT_CACHE_DB_FILE. This is the SQLite file pathname. The default is `…/wp-content/.ht.object_cache.sqlite`. Use this if you want to place the SQLite cache file outside your document root.
 * WP_SQLITE_OBJECT_CACHE_TIMEOUT. This is the SQLite timeout in *milliseconds*. Default: 5000. (Notice that the times shown in the Statistics tab are in *microseconds* if you compare them to this timeout setting.)
 * WP_SQLITE_OBJECT_CACHE_JOURNAL_MODE. This is the [SQLite journal mode](https://www.sqlite.org/pragma.html#pragma_journal_mode). Default: ‘WAL’. Possible values DELETE | TRUNCATE | PERSIST | MEMORY | WAL | WAL2 | NONE. (Not all SQLite3 implementations handle WAL2.)
 * WP_SQLITE_OBJECT_CACHE_APCU. If true enables cache acceleration with APCu RAM. This setting can be updated from the plugin's Settings page.
+* WP_CACHE_KEY_SALT. Set this to a hard-to-guess random value to make your cache keys harder to guess. This setting works for other cache plugins as well. 
 
 <h4>Configuring the cache key salt</h4>
 
-When multiple sites share the same server hardware and software, they can sometimes share the same cache data. Setting `WP_CACHE_KEY_SALT` to a hard-to-guess random value for each site makes it much harder for one site to get another site's data. Notice that this `WP_CACHE_KEY_SALT` value must be set, in your site's `wp-config.php` file, before activating your persistent object cache plugin. This works for other object cache plugins too.
+When multiple sites share the same server hardware and software, they can sometimes share the same cache data. Setting `WP_CACHE_KEY_SALT` to a hard-to-guess random value for each site makes it much harder for one site to get another site's data. This works for other cache plugins too. Notice that this `WP_CACHE_KEY_SALT` value must be set, in your site's `wp-config.php` file, before activating any cache plugin, including page caches and persistent object caches. 
 
 To set the value put a line like this in `wp-config.php`.
 
@@ -271,6 +270,10 @@ Sometimes [WP-CLI](https://wp-cli.org/) commands issued from a shell run with a 
 
 On Linux, you can run your WP-CLI shell commands like this:  `sudo -u www-data wp config list`  This ensures they run with the same user as the web server.
 
+= Does this plugin work with sites hosted on Microsoft Windows OSs with the IIS web server? =
+
+**Yes**. But please be aware that users have reported incompatibilities between this plugin's use of APCu on the one hand and [WinCache](https://www.php.net/manual/en/book.wincache.php) and [OPcache](https://www.php.net/manual/en/book.opcache.php) on the other. If you use those caches, please deactivate this plugin before reconfiguring those cache extensions.
+
 = The Statistics display seems complex. What does it all mean? =
 
 This plugin measures individual operations such as the time to look something up in the cache. It collects those individual measurements. The Statistics display analyzes them to show the fastest and slowest operations, the average operation, and other desciptive statistics.
@@ -297,6 +300,15 @@ Please look for more questions and answers [here](https://www.plumislandmedia.ne
 
 
 == Changelog ==
+
+= 1.5.4 =
+
+* Handle non-persistent groups, get_multiple cache-misses, and MS-DOS line endings correctly.
+* 
+= 1.5.2 =
+
+* Correct a regression in object fetching (failure to clone when needed).
+* Correct wrong display of Use APCu checkbox immediately after setting change
 
 = 1.5.1 =
 
@@ -332,5 +344,7 @@ It avoids file descriptor leaks in long-running php processes. Props to Matt Jon
 It adds a VACUUM option, to defragment its database file and release unused SSD/HDD space.
 
 This release attempts to reduce cache timeouts by doing cleanup operations in chunks, and by retrying timed-out cache update operations. It also does PRAGMA wal_checkpoint(RESTART) when cleaning up, and also occasionally, to prevent the write-ahead log from growing without bound on busy systems.
+
+It is now tested with IIS on Microsoft Windows OSs.
 
 Thanks, dear users for letting me know about defects you found, and for your patience as I figure this out. All remaining errors are solely the responsibility of the author.

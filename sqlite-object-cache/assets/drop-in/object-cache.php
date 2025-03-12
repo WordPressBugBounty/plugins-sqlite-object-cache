@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: SQLite Object Cache (Drop-in)
- * Version: 1.5.1
+ * Version: 1.5.4
  * Note: This Version number must match the one in SQLite_Object_Cache::_construct.
  * Plugin URI: https://wordpress.org/plugins/sqlite-object-cache/
  * Description: A persistent object cache backend powered by SQLite3.
@@ -11,7 +11,7 @@
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Requires PHP: 5.6
  * Tested up to: 6.7.2
- * Stable tag: 1.5.1
+ * Stable tag: 1.5.4
  *
  * NOTE: This uses the file .../wp-content/.ht.object_cache.sqlite
  * and the associated files .../wp-content/.ht.object_cache.sqlite-shm
@@ -37,6 +37,8 @@
  *
  * @package SQLiteCache
  */
+
+/**  @noinspection SqlDialectInspection */
 
 defined( '\\ABSPATH' ) || exit;
 
@@ -94,7 +96,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
     const JOURNAL_MODE = 'WAL';  /* or 'MEMORY' */
     const TRANSACTION_SIZE_LIMIT = 64;
 
-    private $dropin_version = '1.5.1';
+    private $dropin_version = '1.5.4';
     /** @var bool True if a transaction is active. */
     private $transaction_active = false;
     /** Path to SQLite file.  @var string */
@@ -157,7 +159,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
      */
     public $apcu_hits = 0;
     /**
-     * Amount of times the apcu cache had the item.
+     * Amount of times the apcu cache did not have the item.
      *
      * @since 2.0.0
      * @var int
@@ -891,16 +893,40 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
     }
 
     /**
+     * Serialize data for persistence if need be. Use igbinary if available.
+     *
+     * @param mixed $data To be serialized.
+     *
+     * @return string|mixed Data ready for dbms insertion.
+     */
+    private function encode( $data ) {
+      return $this->has_igbinary
+        ? igbinary_serialize( $data )
+        : maybe_serialize( $data );
+    }
+
+
+    /**
      * Unserialize persistend data. Use igbinary if available.
      *
      * @param mixed $data To be unserialized.
      *
      * @return string|mixed Data ready for use.
      */
-    private function maybe_unserialize( $data ) {
+    private function decode( $data ) {
       return $this->has_igbinary
         ? igbinary_unserialize( $data )
         : maybe_unserialize( $data );
+    }
+
+    /**
+     * @param mixed $data The serialized data to reconsititute
+     *
+     * @return mixed|string The data, cloned if an object.
+     */
+    private function reconstitute( $data ) {
+      $ret = $this->decode( $data );
+      return is_object( $ret ) ? clone $ret : $ret;
     }
 
     /**
@@ -1002,19 +1028,6 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
       }
 
       return true;
-    }
-
-    /**
-     * Serialize data for persistence if need be. Use igbinary if available.
-     *
-     * @param mixed $data To be serialized.
-     *
-     * @return string|mixed Data ready for dbms insertion.
-     */
-    private function maybe_serialize( $data ) {
-      return $this->has_igbinary
-        ? igbinary_serialize( $data )
-        : maybe_serialize( $data );
     }
 
     /**
@@ -1190,7 +1203,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
         if ( ! $row ) {
           break;
         }
-        $value = $this->maybe_unserialize( $row[0] );
+        $value = $this->decode( $row[0] );
         yield (object) $value;
       }
       $resultset->finalize();
@@ -1239,7 +1252,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
         $sql  =
           "INSERT INTO $object_stats (value, timestamp) VALUES (:value, :timestamp);";
         $stmt = $this->sqlite->prepare( $sql );
-        $stmt->bindValue( ':value', $this->maybe_serialize( $record ), SQLITE3_BLOB );
+        $stmt->bindValue( ':value', $this->encode( $record ), SQLITE3_BLOB );
         $stmt->bindValue( ':timestamp', time(), SQLITE3_INTEGER );
         $result = $stmt->execute();
         $result->finalize();
@@ -1469,8 +1482,8 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
         if ( array_key_exists( $name, $this->not_in_persistent_cache ) ) {
           return false;
         }
-        $val = $this->get_by_name( $name );
-        if ( null !== $val ) {
+        $val = $this->get_by_name( $name, $fetchsuccess );
+        if ( $fetchsuccess ) {
           $this->cache[ $name ] = $val;
           $exists               = true;
           $this->persistent_hits ++;
@@ -1509,44 +1522,50 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
      * Get one item from external cache.
      *
      * @param string $name Cache key.
+     * @param bool|null $success Set to true if the item was found.
      *
-     * @return mixed|null Cached item, or null if not found. (Cached item can be false.)
-     * @throws Exception Announce database failure.
+     * @return mixed|null Cached item, cloned if an object. Null if not found. (Cached item can be false.)
      */
-    private function get_by_name( $name ) {
+    private function get_by_name( $name, &$success ) {
       if ( array_key_exists( $name, $this->not_in_persistent_cache ) ) {
+        $success = false;
         return null;
       }
       if ( $this->apcu_active ) {
         $astart = hrtime( true );
-        $data   = apcu_fetch( $this->apcusalt . $name, $success );
-        if ( $success ) {
+        $data   = apcu_fetch( $this->apcusalt . $name, $fetchsuccess );
+        if ( $fetchsuccess ) {
+          if ( is_object( $data ) ) {
+            $data = clone $data;
+          }
           ++ $this->apcu_hits;
           $this->apcu_fetch_hit_times[] = hrtime( true ) - $astart;
-
+          $success                      = true;
           return $data;
         } else {
           ++ $this->apcu_misses;
           $this->apcu_fetch_miss_times[] = hrtime( true ) - $astart;
         }
       }
-      $data    = null;
-      $expires = 0;
-      $start   = hrtime( true );
+      $data         = null;
+      $fetchsuccess = false;
+      $expires      = 0;
+      $start        = hrtime( true );
       try {
         $stmt = $this->getone_stmt;
         $stmt->bindValue( ':name', $name, SQLITE3_TEXT );
         $result = $stmt->execute();
         $row    = $result->fetchArray( SQLITE3_NUM );
         if ( false !== $row ) {
-          $data    = $row[0];
-          $expires = $row[1];
-          $expires = ( $expires < self::NOEXPIRE_TIMESTAMP_OFFSET ) ? $expires : $expires - self::NOEXPIRE_TIMESTAMP_OFFSET;
-          $expires = $expires - time();
-          $expires = $expires > 0 ? $expires : DAY_IN_SECONDS;
+          $fetchsuccess = true;
+          $expires      = $row[1];
+          $expires      = ( $expires < self::NOEXPIRE_TIMESTAMP_OFFSET ) ? $expires : $expires - self::NOEXPIRE_TIMESTAMP_OFFSET;
+          $expires      = $expires - time();
+          $expires      = $expires > 0 ? $expires : DAY_IN_SECONDS;
+          $data         = $this->reconstitute( $row[0] );
         }
-        if ( null !== $data ) {
-          $data = $this->maybe_unserialize( $data );
+        if ( $fetchsuccess ) {
+          /* Pull item into APCu */
           if ( $this->apcu_active ) {
             $astart = hrtime( true );
             apcu_store( $this->apcusalt . $name, $data, $expires );
@@ -1566,6 +1585,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
       }
       $this->select_times[] = hrtime( true ) - $start;
 
+      $success = $fetchsuccess;
       return $data;
     }
 
@@ -1582,7 +1602,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
      * more for cache plugins which use files.
      *
      * @param int|string $key What to call the contents in the cache.
-     * @param mixed $data The contents to store in the cache.
+     * @param mixed $data The contents to store in the cache. Objects are cloned before being stored.
      * @param string $group Optional. Where to group the cache contents. Default 'default'.
      * @param int $expire Optional. Not used.
      *
@@ -1592,11 +1612,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
      *
      */
     public function set( $key, $data, $group = 'default', $expire = 0 ) {
-      if ( $this->is_ignored_group( $group ) ) {
-        return false;
-      }
 
-      $start = hrtime( true );
       if ( ! $this->is_valid_key( $key ) ) {
         return false;
       }
@@ -1609,7 +1625,11 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
 
       $this->cache[ $name ] = $data;
 
+      if ( $this->is_ignored_group( $group ) ) {
+        return true;
+      }
 
+      $start = hrtime( true );
       $this->put_by_name( $name, $data, $expire );
       $this->insert_times[] = hrtime( true ) - $start;
 
@@ -1627,12 +1647,11 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
      */
     private function put_by_name( $name, $data, $expire ) {
       $exception = null;
-      $value     = $this->maybe_serialize( $data );
       $expires   = $expire ?: $this->noexpire_timestamp_offset;
       $retries   = 3;
       while ( $retries -- > 0 ) {
         try {
-          $this->actual_put_by_name( $name, $value, $expires );
+          $this->actual_put_by_name( $name, $this->encode( $data ), $expires );
           unset( $this->not_in_persistent_cache[ $name ] );
           if ( $this->apcu_active ) {
             $astart = hrtime( true );
@@ -1787,10 +1806,11 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
      *                      from the persistent cache. Default false.
      *
      * @return array Array of return values, grouped by key. Each value is either
-     *               the cache contents on success, or false on failure.
+     *               the cache contents on success, or false on failure. Objects are cloned
+     *               before putting them in the array.
      * @since 5.5.5
      */
-    public function get_multiple( &$input_keys, $group = 'default', $force = false ) {
+    public function get_multiple( $input_keys, $group = 'default', $force = false ) {
       $values = array();
       if ( count( $input_keys ) <= 1 || $force ) {
         /* Send the degenerate get_multiple calls, and forced calls, to plain old get. That logic is simpler. */
@@ -1815,20 +1835,25 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
           ++ $this->cache_hits;
         } else {
           $keys_not_found[ $key ] = $name;
+          $values[ $key ]         = false;
         }
       }
 
+      /* Examine APCu cache for stashed items. */
       if ( $this->apcu_active && count( $keys_not_found ) > 0 ) {
         $keys_not_found_apcu = array();
         foreach ( $keys_not_found as $key => $name ) {
-          //TODO this can get an array form of the operation.
+          //TODO this can get an array form of the fetch operation.
           $astart = hrtime( true );
           $val    = apcu_fetch( $this->apcusalt . $name, $success );
           if ( $success ) {
+            if ( is_object( $val ) ) {
+              $val = clone $val;
+            }
             ++ $this->apcu_hits;
             $this->apcu_fetch_hit_times[] = hrtime( true ) - $astart;
 
-            $values [ $key ] = is_object( $val ) ? clone $val : $val;
+            $values [ $key ] = $val;
           } else {
             ++ $this->apcu_misses;
             $this->apcu_fetch_miss_times[] = hrtime( true ) - $astart;
@@ -1841,7 +1866,11 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
       if ( count( $keys_not_found ) <= 1 ) {
         /* Degenerate case after fulfilment from RAM: handle as simple get */
         foreach ( $keys_not_found as $key => $name ) {
-          $values[ $key ] = $this->get_by_normalized_name( $name );
+          $success = false;
+          $data    = $this->get_by_normalized_name( $name, $success );
+          if ( $success ) {
+            $values[ $key ] = $data;
+          }
         }
 
         $this->get_multiple_times[] = hrtime( true ) - $start;
@@ -1880,16 +1909,16 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
             }
             ++ $this->persistent_hits;
             $name                 = $row[0];
-            $data                 = $this->maybe_unserialize( $row[1] );
-            $this->cache[ $name ] = $data;
-            $expires              = $row[2];
-            $expires              = ( $expires < self::NOEXPIRE_TIMESTAMP_OFFSET ) ? $expires : $expires - self::NOEXPIRE_TIMESTAMP_OFFSET;
-            $expires              = $expires - time();
-            $expires              = $expires > 0 ? $expires : DAY_IN_SECONDS;
+            $this->cache[ $name ] = $this->reconstitute( $row[1] );
+
+            $expires = $row[2];
+            $expires = ( $expires < self::NOEXPIRE_TIMESTAMP_OFFSET ) ? $expires : $expires - self::NOEXPIRE_TIMESTAMP_OFFSET;
+            $expires = $expires - time();
+            $expires = $expires > 0 ? $expires : DAY_IN_SECONDS;
 
             if ( $this->apcu_active ) {
               $astart = hrtime( true );
-              apcu_store( $this->apcusalt . $name, $data, $expires );
+              apcu_store( $this->apcusalt . $name, $this->cache[ $name ], $expires );
               $this->apcu_store_times[] = hrtime( true ) - $astart;
 
             }
@@ -1905,8 +1934,12 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
         }
         /* Do the alpha keys, if any */
         foreach ( $alphakeys as $key => $name ) {
-          if ( ! array_key_exists( $key, $values ) ) {
-            $values[ $key ] = $this->get_by_normalized_name( $name );
+          if ( false === $values[ $key ] ) {
+            $success = false;
+            $data    = $this->get_by_normalized_name( $name, $success );
+            if ( $success ) {
+              $values[ $key ] = $data;
+            }
             /* limit the size of the transaction, hopefully preventing timeouts in other clients */
             if ( -- $transaction_size <= 0 ) {
               $this->sqlite->exec( 'COMMIT' );
@@ -1916,8 +1949,12 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
           }
         }
         foreach ( $intkeys as $key ) {
-          if ( ! array_key_exists( $key, $values ) ) {
-            $values [ $key ] = $this->get_by_normalized_name( $normalized[ $key ] );
+          if ( false === $values[ $key ] ) {
+            $success = false;
+            $data    = $this->get_by_normalized_name( $normalized[ $key ], $success );
+            if ( $success ) {
+              $values[ $key ] = $data;
+            }
             /* limit the size of the transaction, hopefully preventing timeouts in other clients */
             if ( -- $transaction_size <= 0 ) {
               $this->sqlite->exec( 'COMMIT' );
@@ -1941,6 +1978,8 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
 
     /**
      * Get the cache row name for a key and group.
+     *
+     * Notice that numeric keys have leading zeros applied so we can do range queries.
      *
      * @param int|string $key Key name.
      * @param string $group Group name, default = 'default'.
@@ -2043,18 +2082,21 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
      * On failure, the number of cache misses will be incremented.
      *
      * @param string $name Normalized name.
+     * @param bool $found Whether the key was found in the cache (passed by reference). Disambiguates a return of false, a storable value.
      *
-     * @return mixed|false The cache contents on success, false on failure to retrieve contents.
+     * @return mixed|false The cache contents -- clones of objects -- on success, false on failure to retrieve contents.
      * @since 2.0.0
      */
-    private function get_by_normalized_name( $name ) {
+    private function get_by_normalized_name( $name, &$found ) {
       if ( -- $this->get_depth <= 0 ) {
+        $found = false;
         return false;
       }
       try {
         if ( array_key_exists( $name, $this->cache ) || $this->cache_item_exists( $name ) ) {
           ++ $this->cache_hits;
           ++ $this->get_depth;
+          $found = true;
 
           return is_object( $this->cache[ $name ] ) ? clone( $this->cache[ $name ] ) : $this->cache[ $name ];
         }
@@ -2063,11 +2105,13 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
 
         ++ $this->get_depth;
 
+        $found = false;
         return false;
       }
       $this->cache_misses ++;
       ++ $this->get_depth;
 
+      $found = false;
       return false;
     }
 

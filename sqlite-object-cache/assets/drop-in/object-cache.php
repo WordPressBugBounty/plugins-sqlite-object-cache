@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: SQLite Object Cache (Drop-in)
- * Version: 1.5.4
+ * Version: 1.5.5
  * Note: This Version number must match the one in SQLite_Object_Cache::_construct.
  * Plugin URI: https://wordpress.org/plugins/sqlite-object-cache/
  * Description: A persistent object cache backend powered by SQLite3.
@@ -10,8 +10,8 @@
  * License: GPLv2+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Requires PHP: 5.6
- * Tested up to: 6.7.2
- * Stable tag: 1.5.4
+ * Tested up to: 6.8
+ * Stable tag: 1.5.5
  *
  * NOTE: This uses the file .../wp-content/.ht.object_cache.sqlite
  * and the associated files .../wp-content/.ht.object_cache.sqlite-shm
@@ -96,7 +96,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
     const JOURNAL_MODE = 'WAL';  /* or 'MEMORY' */
     const TRANSACTION_SIZE_LIMIT = 64;
 
-    private $dropin_version = '1.5.4';
+    private $dropin_version = '1.5.5';
     /** @var bool True if a transaction is active. */
     private $transaction_active = false;
     /** Path to SQLite file.  @var string */
@@ -554,25 +554,6 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
     }
 
     /**
-     * Load translations early if necessary and possible.
-     *
-     * @return bool
-     */
-    private static function translationsLoaded() {
-      $translations = function_exists( '__' );
-      try {
-        if ( ! $translations ) {
-          wp_load_translations_early();
-          $translations = function_exists( '__' );
-        }
-      } catch ( Exception $ex ) {
-        $translations = false;
-      }
-
-      return $translations;
-    }
-
-    /**
      * Convert a list of integers into a list of runs: consecutive integers.
      *
      * Runs expand to include up to $erode_gaps extra integers, to make
@@ -644,13 +625,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
      * @return void
      */
     public static function drop_dead( $msg = null ) {
-      if ( ! $msg ) {
-        $translations = self::translationsLoaded();
-        $msg          = $translations
-          ? __( 'The SQLite Object Cache temporarily failed. Please try again now.', 'sqlite-object-cache' )
-          : 'The SQLite Object Cache temporarily failed. Please try again now.';
-      }
-      wp_die( esc_html( $msg ) );
+      wp_die( $msg ?: 'The SQLite Object Cache temporarily failed. Please try again now.' );
     }
 
     /**
@@ -665,10 +640,15 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
       $log_exception = ! ! $exception;
       $msgs          = array();
       $msgs []       = 'SQLite Object Cache:';
+      $msgs []       = $this->dropin_version;
+      $msgs []       = 'SQLite:';
       $msgs []       = $this->sqlite_get_version();
-      $msgs []       = $this->has_igbinary ? 'igbinary:' : 'no igbinary:';
-      $msgs []       = 'php ' . PHP_VERSION . ':';
-      $msgs []       = $_SERVER['SERVER_SOFTWARE'] . ':';
+      $msgs []       = $this->has_igbinary ? 'igbinary' : 'no igbinary';
+      $msgs []       = $this->apcu_active ? 'APCu active' : 'APCu inactive';
+      $msgs []       = 'php:';
+      $msgs []       = PHP_VERSION;
+      $msgs []       = 'server:';
+      $msgs []       = $_SERVER['SERVER_SOFTWARE'];
       $msgs []       = $msg;
       if ( $this->sqlite ) {
         if ( $this->sqlite->lastErrorMsg() ) {
@@ -793,7 +773,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
 						   expires INT,
 						   value BLOB
 						);
-						CREATE UNIQUE INDEX IF NOT EXISTS name ON $this->cache_table_name (name);
+						CREATE UNIQUE INDEX IF NOT EXISTS cache_name ON $this->cache_table_name (name);
 						CREATE INDEX IF NOT EXISTS expires ON $this->cache_table_name (expires);";
         } else {
           /* @noinspection SqlIdentifier */
@@ -805,7 +785,6 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
 						) WITHOUT ROWID;
 						CREATE INDEX IF NOT EXISTS expires ON $this->cache_table_name (expires);";
         }
-
         $this->sqlite->exec( $t );
 
         if ( $uses_rowid ) {
@@ -814,7 +793,7 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
 						CREATE TABLE IF NOT EXISTS $this->flags_table_name (
 						   name TEXT NOT NULL COLLATE BINARY
 						);
-						CREATE UNIQUE INDEX IF NOT EXISTS name ON $this->flags_table_name (name);";
+						CREATE UNIQUE INDEX IF NOT EXISTS flags_name ON $this->flags_table_name (name);";
         } else {
           /* @noinspection SqlIdentifier */
           $t = "
@@ -822,9 +801,13 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
 						   name TEXT NOT NULL PRIMARY KEY COLLATE BINARY
 						) WITHOUT ROWID;";
         }
-
         $this->sqlite->exec( $t );
 
+        /* Put the drop-in's version number in the SQLite file, for troubleshooting. */
+        $version = str_replace( '.', '0', $this->dropin_version );
+        if ( is_numeric( $version ) ) {
+          $this->sqlite->exec( "PRAGMA user_version=" . ( (int) $version ) . ";" );
+        }
         /* Creating SQLite tables; clear APCu at the same time. */
         $this->apcu_clear_cache();
       }
@@ -938,20 +921,11 @@ if ( ! defined( 'WP_SQLITE_OBJECT_CACHE_DISABLED' ) || ! WP_SQLITE_OBJECT_CACHE_
      */
     public static function has_sqlite( $directory = WP_CONTENT_DIR ) {
       if ( ! wp_is_writable( $directory ) ) {
-        $translations = self::translationsLoaded();
-
-        return $translations
-          ? sprintf( /* translators: 1: WP_CONTENT_DIR */ __( 'The SQLite Object Cache cannot be activated because the %s directory is not writable.', 'sqlite-object-cache' ), $directory )
-          : sprintf( 'The SQLite Object Cache cannot be activated because the %s directory is not writable.', $directory );
-
+        return sprintf( 'The SQLite Object Cache cannot be activated because the %s directory is not writable.', $directory );
       }
 
       if ( ! class_exists( 'SQLite3' ) || ! extension_loaded( 'sqlite3' ) ) {
-        $translations = self::translationsLoaded();
-
-        return $translations
-          ? __( 'The SQLite Object Cache cannot be activated because the SQLite3 extension is not loaded.', 'sqlite-object-cache' )
-          : 'The SQLite Object Cache cannot be activated because the SQLite3 extension is not loaded.';
+        return  'The SQLite Object Cache cannot be activated because the SQLite3 extension is not loaded.';
       }
 
       return true;

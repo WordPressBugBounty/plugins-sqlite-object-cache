@@ -4,9 +4,9 @@ Contributors: OllieJones
 Tags: cache, object cache, sqlite, performance, apcu
 Requires at least: 5.5
 Requires PHP: 5.6
-Tested up to: 6.8
-Version: 1.5.6
-Stable tag: 1.5.6
+Tested up to: 6.9
+Version: 1.6.1
+Stable tag: 1.6.1
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 Github Plugin URI: https://github.com/OllieJones/sqlite-object-cache
@@ -46,7 +46,7 @@ But, for single-server site configurations, SQLite, possibly assisted by APCu, p
 
 Please look at [Installation](https://wordpress.org/plugins/sqlite-object-cache/#installation) to learn how to configure this plugin to use APCu. The plugin works fast without it, and faster with it.
 
-WP-CLI: Even if APCu is in use, caching with SQLite is necessary when your web site uses WP-CLI, because WP-CLI programs do not have acces to the APCu cache. This plugin writes all cached data both to APCu and to SQLite and makes sure the two are synchronized.
+WP-CLI: Even if APCu is in use, caching with SQLite is necessary when your web site uses WP-CLI, because WP-CLI programs do not have access to the APCu cache. This plugin writes all cached data both to APCu and to SQLite and makes sure the two are synchronized.
 
 <h4>WP-CLI</h4>
 
@@ -146,7 +146,7 @@ Notice that this setting controls the size of the data in the cache. That is the
 
 = On my server the APCu shared memory cache is too small. How can I make it bigger? =
 
-On most operating systems the size of the APCu cache is, as installed, 32MiB. If you need to increase this size you can a line to your `php.ini` file mentioning the [apc.shm_size](https://www.php.net/manual/en/apcu.configuration.php#ini.apcu.shm-size) configuration option. For example, the line `apc.shm_size = 64M` sets the size to 64MiB. Please consult your operating system or hosting provider documetation for information on how to do this. 
+On most operating systems the size of the APCu cache is, as installed, 32MiB. If you need to increase this size you can add a line to your `php.ini` file mentioning the [apc.shm_size](https://www.php.net/manual/en/apcu.configuration.php#ini.apcu.shm-size) configuration option. For example, the line `apc.shm_size = 64M` sets the size to 64MiB. Please consult your operating system or hosting provider documetation for information on how to do this. 
 
 Notice that sometimes multiple WordPress installations that run on the same server share the same APCu cache, so provide enough space for them all. And keep in mind that this plugin only uses APCu to accelerate its operations, so the consequences of setting its size too small are not great.
 
@@ -160,7 +160,7 @@ No, you don't. This plugin doesn't use SQLite as a full-fledged database server.
 
 A persistent object cache needs some kind of storage mechanism. SQLite serves this plugin as a fast and simple key / value storage mechanism.
 
-Some hosting providers offer scalable high-performance [redis](https://redis.io/) cache servers.  You can use it via [Redis Object Cache](https://wordpress.org/plugins/redis-cache/) plugin. Sites using redis have one SQL database and another non-SQL storage scheme: redis. Other hosting providers offer [memcached](https://memcached.org/), which has the [Memcached Object Cache](https://wordpress.org/plugins/memcached/).
+Some hosting providers offer the scalable high-performance [redis](https://redis.io/) cache server.  You can use it via [Redis Object Cache](https://wordpress.org/plugins/redis-cache/) plugin. Sites using redis have one SQL database and another non-SQL storage scheme: redis. Some other hosting providers offer [memcached](https://memcached.org/), which has the [Memcached Object Cache](https://wordpress.org/plugins/memcached/).
 
 But many hosting providers don't offer either redis or memcached, while they do offer SQLite. This plugin enables your site to use a persistent object cache even without a separate cache server. And, because everything happens within your web server, the performance is good.
 
@@ -266,6 +266,8 @@ Some sites occasionally generate error messages looking like this one:
 
 This can happen if your server places your WordPress files on network-attached storage (that is, on a network drive). To solve this, store your cached data on a locally attached drive. See the question about storing your data in a more secure place. It also can happen in a very busy site.
 
+Timeout errors can also happen if your Cached Data Size, or your site, is very large. Try reducing your Cached Data Size. If that doesn't help eliminate timeout errors, try setting the  `WP_SQLITE_OBJECT_CACHE_TIMEOUT` parameter in your `wp-config.php` file to something larger than the default 5000 milliseconds.
+
 = Why do I get errors when I use WP-CLI to administer my site? =
 
 Sometimes [WP-CLI](https://wp-cli.org/) commands issued from a shell run with a different user from the web server. This plugin creates one or more object-cache files. An object-cache file may not be readable or writeable by the web server if it was created by the wp-cli user. Or the other way around.
@@ -303,6 +305,22 @@ Please look for more questions and answers [here](https://www.plumislandmedia.ne
 
 == Changelog ==
 
+= 1.6.1 =
+
+* Add an optional Flush Object Cache button to the admin bar. Props to Nick Chomey.
+* Fix a defect in testing for writability of the .sqlite files. Props to @powerkiki: Adrien Crivelli.
+
+
+= 1.6.0 =
+
+* Multisite: put the settings and statistics panels on the main site only.
+
+= 1.5.7 =
+
+* Flush the cache immediately after any software installation or upgrade operation.
+* To eliminate state data delete all transients from the database on activation and deactivation.
+* Add a Help tab and hyperlink to the statistics display.
+
 = 1.5.6 =
 
 * Fix a warning while generating diagnostic info.
@@ -334,18 +352,4 @@ Please look for more questions and answers [here](https://www.plumislandmedia.ne
 
 == Upgrade Notice ==
 
-The plugin now presents diagnostic data on Tools->Site Health->Info.
-
-This release optionally uses php's [APCu](https://www.php.net/manual/en/book.apcu.php) RAM cache extension to speed things up. You can opt in to using it via the plugin's dashboard page at Settings -> Object Cache. Please see the plugin's Installation instructions.
-
-This release offers WP-CLI support. Give the command `wp help sqlite-object-cache` for usage instructions.
-
-It avoids file descriptor leaks in long-running php processes. Props to Matt Jones (no relation to the author).
-
-It adds a VACUUM option, to defragment its database file and release unused SSD/HDD space.
-
-This release attempts to reduce cache timeouts by doing cleanup operations in chunks, and by retrying timed-out cache update operations. It also does PRAGMA wal_checkpoint(RESTART) when cleaning up, and also occasionally, to prevent the write-ahead log from growing without bound on busy systems.
-
-It is now tested with IIS on Microsoft Windows OSs.
-
-Thanks, dear users for letting me know about defects you found, and for your patience as I figure this out. All remaining errors are solely the responsibility of the author.
+Shorten drop-in file, get rid of plugin-checker flags, add optional Flush button to admin bar, fix writability check bug.

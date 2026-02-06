@@ -16,6 +16,8 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class SQLite_Object_Cache_Settings {
 
+  static $statistics_help_url = 'https://www.plumislandmedia.net/wordpress-plugins/sqlite-object-cache/statistics-from-sqlite-object-cache/';
+
   /**
    * The main plugin object.
    *
@@ -45,35 +47,130 @@ class SQLite_Object_Cache_Settings {
   public $has = '';
 
   /**
+   * @var string The plugin file name.
+   */
+  private $plugin_file;
+  /**
+   * @var mixed
+   */
+  private $caught_option_value = false;
+
+  /**
    * Constructor function.
    *
    * @param object $parent Parent object.
+   * @param string $plugin_file Plugin top-level file name.
    */
-  public function __construct( $parent ) {
-    $this->parent = $parent;
-    $this->has    = $parent->has_sqlite();
-    $this->base   = 'sqlite_object_cache_';
-
-    // Information for Site Health Info
-    add_filter( 'debug_information', array( $this, 'debug_information' ) );
+  public function __construct( $parent, $plugin_file ) {
+    $this->parent      = $parent;
+    $this->has         = $parent->has_sqlite();
+    $this->base        = 'sqlite_object_cache_';
+    $this->plugin_file = $plugin_file;
 
     // Register plugin settings.
     add_action( 'admin_init', array( $this, 'register_my_settings' ) );
 
-    // Add settings page to menu.
-    add_action( 'admin_menu', array( $this, 'add_menu_item' ) );
+    if ( is_main_site() ) {
+      // Information for Site Health Info
+      add_filter( 'debug_information', array( $this, 'debug_information' ) );
 
-    // Add settings link to plugins page.
-    add_filter(
-      'plugin_action_links_' . plugin_basename( $this->parent->file ),
-      array(
-        $this,
-        'add_settings_link',
-      )
-    );
+      // Add settings page to menu.
+      add_action( 'admin_menu', array( $this, 'add_menu_item' ) );
+
+      // Add settings link to plugins page.
+      add_filter(
+        'plugin_action_links_' . plugin_basename( $this->parent->file ),
+        array(
+          $this,
+          'add_settings_link',
+        )
+      );
+    }
+
+    // For multisite, propagate the option value to all subsites.
+    if ( is_multisite() ) {
+      add_action( 'update_option_' . $this->parent->_token . '_settings', array( $this, 'catch_option' ), 20, 3 );
+    }
 
     // Configure placement of plugin settings page. See readme for implementation.
     add_filter( $this->base . 'menu_settings', array( $this, 'configure_settings' ) );
+
+    // Spoonsor link.
+    add_filter( 'plugin_row_meta', array( $this, 'filter_plugin_row_meta' ), 10, 2 );
+
+  }
+
+  /**
+   * Fires after the value of our option has been successfully updated.
+   *
+   * @param mixed $old_value The old option value.
+   * @param mixed $value The new option value.
+   * @param string $option Option name.
+   */
+  public function catch_option( $old_value, $value, $option ) {
+    if ( false === $this->caught_option_value ) {
+      add_action( 'shutdown', array( $this, 'propagate_option' ) );
+    }
+    $this->caught_option_value = $value;
+  }
+
+  /**
+   * Shutdown action handler to copy our option to all subsites.
+   *
+   * We use this rather than a site option because this gets us autoloading.
+   *
+   * @return void
+   */
+  public function propagate_option() {
+    remove_action( 'update_option_' . $this->parent->_token . '_settings', array( $this, 'catch_option' ), 20 );
+    $current_site = get_current_blog_id();
+    foreach (
+      get_sites( array(
+        'number'        => 0,
+        'fields'        => 'ids',
+        'no_found_rows' => true,
+        'orderby'       => false
+      ) ) as $site_id
+    ) {
+      if ( $site_id !== $current_site ) {
+        try {
+          switch_to_blog( $site_id );
+          update_option( $this->parent->_token . '_settings', $this->caught_option_value, true );
+        } catch ( Exception $ex ) {
+          /* Empty, intentionally. Don't crash on asset cleanup. */
+        } finally {
+          restore_current_blog();
+        }
+      }
+    }
+  }
+
+  /**
+   * Filters the array of row meta for each plugin in the Plugins list table.
+   *
+   * @param array<int, string> $plugin_meta An array of the plugin's metadata.
+   * @param string $plugin_file Path to the plugin file relative to the plugins directory.
+   *
+   * @return array<int, string> Updated array of the plugin's metadata.
+   */
+  public function filter_plugin_row_meta( array $plugin_meta, $plugin_file ) {
+    if ( $this->plugin_file !== $plugin_file ) {
+      return $plugin_meta;
+    }
+
+    if ( is_multisite() && ( is_network_admin() || ! is_main_site() ) ) {
+      $plugin_meta[] =
+        esc_html__( 'See the main site\'s dashboard for settings.', 'sqlite-object-cache' );
+    }
+
+    /** @noinspection HtmlUnknownTarget */
+    $plugin_meta[] = sprintf(
+      '<a href="%1$s"><span class="dashicons dashicons-star-filled" aria-hidden="true" style="font-size:14px;line-height:1.3"></span>%2$s</a>',
+      'https://github.com/sponsors/OllieJones',
+      esc_html_x( 'Sponsor', 'verb', 'sqlite-object-cache' )
+    );
+
+    return $plugin_meta;
   }
 
   /**
@@ -87,7 +184,7 @@ class SQLite_Object_Cache_Settings {
       array(
         'id'          => 'flush',
         'label'       => __( 'Flush now', 'sqlite-object-cache' ),
-        'description' => __( 'Check to flush the cache (delete all its entries) now.', 'sqlite-object-cache' ) . ' ' .
+        'description' => __( 'Check to flush the cache (delete all its entries, including all transients) now.', 'sqlite-object-cache' ) . ' ' .
                          __( 'This briefly puts your site into maintenance mode.', 'sqlite-object-cache' ),
         'type'        => 'checkbox',
         'default'     => '',
@@ -150,6 +247,13 @@ class SQLite_Object_Cache_Settings {
         'step'        => 'any',
         'cssclass'    => 'narrow',
         'placeholder' => __( 'Hours to retain.', 'sqlite-object-cache' ),
+      ),
+      array(
+        'id'          => 'adminbarflush',
+        'label'       => __( 'Show', 'sqlite-object-cache' ),
+        'description' => __( 'Flush Object Cache button in the admin bar.', 'sqlite-object-cache' ),
+        'type'        => 'checkbox',
+        'default'     => '',
       )
     );
 
@@ -165,7 +269,10 @@ class SQLite_Object_Cache_Settings {
     }
 
     $settings['standard'] = array(
+      // Using core I18n.
+      // phpcs:ignore WordPress.WP.I18n.MissingArgDomain
       'title'                 => __( 'Settings' ),
+      // phpcs:ignore WordPress.WP.I18n.MissingArgDomain
       'submit'                => __( 'Save Changes' ),
       'description'           => '',
       'render_section_header' => array( $this, 'settings_section_header' ),
@@ -180,7 +287,7 @@ class SQLite_Object_Cache_Settings {
       'form_post_callback'    => array( $this, 'validate_reset_stats' ),
     );
 
-    return apply_filters( $this->parent->_token . '_settings_fields', $settings );
+    return apply_filters( 'sqlite_object_cache_settings_fields', $settings );
   }
 
   /**
@@ -344,7 +451,7 @@ class SQLite_Object_Cache_Settings {
     $this->complain_if_sqlite3_unavailable();
 
     return apply_filters(
-      $this->base . 'menu_settings',
+      'sqlite_object_cachemenu_settings',
       array(
         'location'    => 'options', // Possible settings: options, menu, submenu.
         'parent_slug' => 'options-general.php',
@@ -450,6 +557,7 @@ class SQLite_Object_Cache_Settings {
     if ( is_array( $this->settings ) ) {
 
       /* get the tab chosen by the user ('standard' or 'stats') */
+      // phpcs:ignore WordPress.Security.NonceVerification.Recommended
       $tab = isset ( $_REQUEST['tab'] ) ? sanitize_key( $_REQUEST['tab'] ) : 'standard';
 
       $default_option = array();
@@ -486,7 +594,7 @@ class SQLite_Object_Cache_Settings {
             add_settings_field(
               $field['id'],
               $field['label'],
-              array( $this->parent->admin, 'echo_field' ),
+              array( $this, 'echo_field' ),
               $this->parent->_token . '_settings',
               $section,
               array(
@@ -596,12 +704,19 @@ class SQLite_Object_Cache_Settings {
       : __( 'unavailable', 'sqlite-object-cache' );
 
     if ( method_exists( $wp_object_cache, 'sqlite_get_version' ) ) {
+      $server_software = 'unk';
+      // phpcs:disable WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.ValidatedSanitizedInput.MissingUnslash
+      if ( isset( $_SERVER['SERVER_SOFTWARE'] ) && is_string( $_SERVER['SERVER_SOFTWARE'] ) ) {
+        $server_software = $_SERVER['SERVER_SOFTWARE'];
+      }
+      // phpcs:enable WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.ValidatedSanitizedInput.MissingUnslash
       echo '<p>' . esc_html( sprintf(
         /* translators: 1: version for sqlite   2: version for php  3: webserver version 4: version for plugin  5: igbinary  6:APCu  7:WordPress */
           __( 'Versions: WordPress: %7$s  SQLite: %1$s  php: %2$s  Server: %3$s Plugin: %4$s  APCu: %6$s  igbinary: %5$s.', 'sqlite-object-cache' ),
           $wp_object_cache->sqlite_get_version(),
           PHP_VERSION,
-          $_SERVER['SERVER_SOFTWARE'],
+          // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+          $server_software,
           $this->parent->_version,
           $igbinary,
           $apcu_version,
@@ -638,6 +753,7 @@ class SQLite_Object_Cache_Settings {
 
     $this->enqueue_assets();
     /* get the tab chosen by the user ('standard' by default or 'stats') */
+    // phpcs:ignore WordPress.Security.NonceVerification.Recommended
     $tab = isset ( $_REQUEST['tab'] ) ? sanitize_key( $_REQUEST['tab'] ) : 'standard';
 
     // Build page HTML.
@@ -669,6 +785,10 @@ class SQLite_Object_Cache_Settings {
         echo '<a href="' . esc_url( $tab_link ) . '" class="' . esc_attr( $class ) . '">' . esc_html( $data['title'] ) . '</a>' . PHP_EOL;
       }
 
+      if ( 'stats' === $tab ) {
+        echo '<a href="' . esc_url( self::$statistics_help_url ) . '" class="nav-tab" target="_blank">' . esc_html__( 'Help', 'sqlite-object-cache' ) . '</a>' . PHP_EOL;
+      }
+
       echo '</h2>' . PHP_EOL;
     }
 
@@ -676,8 +796,8 @@ class SQLite_Object_Cache_Settings {
     echo '<form method="post" action="options.php" enctype="multipart/form-data">' . PHP_EOL;
 
     // Get settings fields.
-    settings_fields( $this->parent->_token . '_settings' );
-    do_settings_sections( $this->parent->_token . '_settings' );
+    settings_fields( 'sqlite_object_cache_settings' );
+    do_settings_sections( 'sqlite_object_cache_settings' );
 
     echo '<p class="submit">' . PHP_EOL;
     echo '<input type="hidden" name="tab" value="' . esc_attr( $tab ) . '" />' . PHP_EOL;
@@ -722,7 +842,7 @@ class SQLite_Object_Cache_Settings {
    */
   private function exit_maintenance_mode() {
     $maintenanceFileName = ABSPATH . '.maintenance';
-    unlink( $maintenanceFileName );
+    wp_delete_file( $maintenanceFileName );
   }
 
   /**
@@ -833,7 +953,7 @@ class SQLite_Object_Cache_Settings {
           $totalcount       += 1;
         }
 
-        $apcusalt           = trim( property_exists( $wp_object_cache, 'apcusalt' ) ? $wp_object_cache->apcusalt : '', '|' );
+        $apcusalt           = trim( property_exists( $wp_object_cache, 'apcusalt' ) && is_string( $wp_object_cache->apcusalt ) ? $wp_object_cache->apcusalt : '', '|' );
         $settings           = array();
         $settings ['salt']  = $apcusalt;
         $settings ['total'] = "$totalsize($totalcount)";
@@ -908,12 +1028,135 @@ class SQLite_Object_Cache_Settings {
         if ( array_key_exists( 'local_value', $v ) ) {
           $v = $v['local_value'];
         } else {
+          // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_var_export
           $v = var_export( $v, true );
         }
       }
       $result [] = $k . ':' . $v;
     }
     return implode( '; ', $result );
+  }
+
+  /**
+   * Generate HTML for displaying fields.
+   *
+   * @param mixed $idata Data array.
+   * @param object $post Post object.
+   */
+  public function echo_field( $idata = array(), $post = null ) {
+
+    // Get field info.
+    if ( isset( $idata['field'] ) ) {
+      $field = $idata['field'];
+    } else {
+      $field = $idata;
+    }
+
+    $option_name = '';
+    if ( isset( $idata['option'] ) ) {
+      $option_name = $idata['option'];
+    }
+
+    /* Get saved data. */
+    $field_id = $field['id'];
+    $data     = null;
+
+    /* Data to display, if set */
+    $option = get_option( $option_name, array() );
+    if ( is_array( $option ) && array_key_exists( $field_id, $option ) ) {
+      $data = $option[ $field_id ];
+    }
+
+    /* the reset element sets the value of the field, overriding whatever is in the option */
+    if ( array_key_exists( 'reset', $field ) ) {
+      $data = $field['reset'];
+    }
+
+    /* Show default data if no option saved and default is supplied. */
+    if ( null === $data && isset( $field['default'] ) ) {
+      $data = $field['default'];
+    } elseif ( null === $data ) {
+      $data = '';
+    }
+
+    /* CSS class array */
+    $classes = array();
+    if ( array_key_exists( 'cssclass', $field ) ) {
+      $classes = is_array( $field['cssclass'] ) ? $field['cssclass'] : array( $field['cssclass'] );
+    }
+
+    echo '<input ';
+    echo 'id="' . esc_attr( $field['id'] ) . '" ';
+    $this->echo_classes( $classes ) . ' ';
+    echo 'name="' . esc_attr( $option_name ) . '[' . esc_attr( $field_id ) . ']" ';
+    if ( array_key_exists( 'placeholder', $field ) ) {
+      echo 'placeholder="' . esc_attr( $field['placeholder'] ) . '" ';
+    }
+    switch ( $field['type'] ) {
+
+      case 'text':
+      case 'url':
+      case 'email':
+        echo 'type="text" ';
+        echo 'value="' . esc_attr( $data ) . '" ';
+        break;
+
+      case 'number':
+        echo 'type="number" ';
+        echo 'value="' . esc_attr( $data ) . '" ';
+        if ( isset( $field['min'] ) ) {
+          echo 'min="' . esc_attr( $field['min'] ) . '" ';
+        }
+        if ( isset( $field['max'] ) ) {
+          echo 'max="' . esc_attr( $field['max'] ) . '" ';
+        }
+        if ( isset( $field['step'] ) ) {
+          echo 'step="' . esc_attr( $field['step'] ) . '" ';
+        }
+        break;
+
+      case 'password':
+      case 'hidden':
+        echo 'type="' . esc_attr( $field['type'] ) . '" ';
+        echo 'value="' . esc_attr( $data ) . '" ';
+        break;
+
+      case 'checkbox':
+        echo 'type="checkbox" ';
+        if ( 'on' === $data ) {
+          echo 'checked="checked" ';
+        }
+        break;
+    }
+    echo '>' . PHP_EOL;
+
+    if ( ! $post ) {
+      echo '<label for="' . esc_attr( $field['id'] ) . '">' . PHP_EOL;
+    }
+
+    echo '<span class="description">' . esc_html( $field['description'] ) . '</span>' . PHP_EOL;
+
+    if ( ! $post ) {
+      echo '</label>' . PHP_EOL;
+    }
+  }
+
+  /**
+   * Given an array of CSS class names ['foo', 'bar'] echo class="foo bar".
+   *
+   * If the array is empty just echo a space.
+   *
+   * @param array $classes
+   *
+   * @return void
+   */
+  private function echo_classes( array $classes ) {
+    if ( count( $classes ) > 0 ) {
+      echo 'class="';
+      echo esc_html( implode( ' ', array_map( 'esc_attr', $classes ) ) );
+      echo '"';
+    }
+    echo ' ';
   }
 
 

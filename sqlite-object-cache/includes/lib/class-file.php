@@ -69,7 +69,7 @@ class SQLite_Object_Cache_File {
       }
     }
     if ( ! $found ) {
-      throw new \Exception( 'No opening php tag in ', $this->filename );
+      throw new Exception( esc_html( 'No opening php tag in ' . $this->filename ) );
     }
     $this->lines = $result;
     return true;
@@ -89,11 +89,6 @@ class SQLite_Object_Cache_File {
       return ltrim( $line, "\r" );
     }, $result );
     return $result;
-  }
-
-  public static function write_lines( $filename, $lines ) {
-    $lines = array_filter( $lines );
-    self::save( $filename, implode( "\n", $lines ) );
   }
 
 

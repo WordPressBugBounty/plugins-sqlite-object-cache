@@ -2,11 +2,11 @@
 Author: Oliver Jones
 Contributors: OllieJones
 Tags: cache, object cache, sqlite, performance, apcu
-Requires at least: 5.5
+Requires at least: 5.9
 Requires PHP: 5.6
 Tested up to: 7.0
-Version: 1.6.3
-Stable tag: 1.6.3
+Version: 1.6.4
+Stable tag: 1.6.4
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 Github Plugin URI: https://github.com/OllieJones/sqlite-object-cache
@@ -179,6 +179,8 @@ Users of this plugin have found that it works well with WP Rocket, LiteSpeed Cac
 
 That's not how object caching works. It's different from page caching. It works at the level of individual database operations in the WordPress code, not at the level of whole pages.
 
+The object cache contents are organized by group. For example, it caches data from your `wp_postmeta` table in the cache group called `'post_meta'`.  You can disable caching for particular groups with [`wp_cache_add_non_persistent_groups()`](https://developer.wordpress.org/reference/functions/wp_cache_add_non_persistent_groups/). Some plugins need to use this feature.
+
 = Is this plugin compatible with my version of MySQL or MariaDB? =
 
 **Yes**. It does not require any specific database server version.
@@ -189,7 +191,7 @@ That's not how object caching works. It's different from page caching. It works 
 
 = This cache uses a file on my server HDD/SSD, while redis and memcached use RAM. Isn't RAM faster?  =
 
-RAM is indeed faster. Modern server operating systems offer extensive page caching for files, and SQLite is designed to take advantage of that, so the data needed may already be in RAM. Using a separate cache server require the web server to issue network requests and wait for responses, whereas using SQLite does not.
+RAM is indeed faster. Modern server operating systems offer extensive page caching in RAM for files, and SQLite is designed to take advantage of that, so the data needed may already be in RAM. Using a separate cache server require the web server to issue network requests and wait for responses, whereas using SQLite does not.
 
 = Why not use the site's main MariaDB or MySql database server for the object cache? =
 
@@ -306,14 +308,22 @@ Please look for more questions and answers [here](https://www.plumislandmedia.ne
 
 == Changelog ==
 
+= 1.6.4 =
+
+* Set the permissions of SQLite's files (including the -wal and -shm files) to group-writeable to make WL-CLI more convenient.
+* Handle incrementing and decrementing expiring cache entries correctly, and handle expiration around runtime flush correctly.
+* Selectively flush the APCu cache upon wp_flush_cache_group.
+* Improve the cache key display on the statistics tab.
+
 = 1.6.3 =
+
 A race condition caused expired cache entries to be copied to APCu incorrectly sometimes. This is corrected. Props to @pobrehablador for finding this defect.
 
 = 1.6.2 =
 
 * Use PRAGMA wal_checkpoint(TRUNCATE) sometimes to avoid excessively large re-used WAL files.
 * Checkpoint more frequently.
-* Health check for OPcache (not APCu) RAM exhaustion.
+* Health check for OPcache (not APCu) saturation.
 
 = 1.6.1 =
 
@@ -362,4 +372,4 @@ A race condition caused expired cache entries to be copied to APCu incorrectly s
 
 == Upgrade Notice ==
 
-Correct a race condition upon cache item expiration. Improve SQLite3 checkpointing to reduce the probability of huge WAL files. Add a health check for OPcache (not APCu) exhaustion.
+Handle expirations better. Set file permissions like other WordPress files.
